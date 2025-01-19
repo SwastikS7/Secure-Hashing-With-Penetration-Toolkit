@@ -1,0 +1,26 @@
+body {
+  background-color: #f4f4f4;
+  font-family: Arial, sans-serif;
+}
+
+.main {
+  text-align: center;
+  margin-top: 100px;
+}
+
+.main h2 {
+  color: green;
+}
+
+.btn {
+  display: inline-block;
+  background-color: #4CAF50;
+  color: white;
+  padding: 10px 20px;
+  text-decoration: none;
+  margin-top: 20px;
+}
+
+.btn:hover {
+  background-color: #45a049;
+}
