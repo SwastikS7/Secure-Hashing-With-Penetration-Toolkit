@@ -1,0 +1,251 @@
+index.html:
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.0.0-beta2/dist/css/bootstrap.min.css" rel="stylesheet" crossorigin="anonymous" />
+    <link rel="stylesheet" href="/css/style.css" />
+    <script src="/js/SHA512.js"></script>
+    <script src="/js/checkout.js"></script>
+    <title>Gadgets Store</title>
+</head>
+<body>
+    <div class="container">
+        <h1 class="text-center my-4">Gadget Store</h1>
+        <div class="d-flex justify-content-end mb-3">
+            <div class="form-check form-switch">
+                <input class="form-check-input" type="checkbox" id="attackProtection" onchange="toggleAttackProtection()">
+                <label class="form-check-label" for="attackProtection">Attack Protection</label>
+            </div>
+        </div>
+        <div id="products" class="row"></div>
+    </div>
+
+    <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.5.1/jquery.min.js"></script>
+    <script>
+        let productsArr = [];
+        let attackProtection = false;
+
+        function toggleAttackProtection() {
+            attackProtection = document.getElementById("attackProtection").checked;
+        }
+
+        function loadProducts() {
+            $.ajax({
+                url: "https://dummyjson.com/products",
+                method: "GET",
+                success(res) {
+                    productsArr = res.products;
+                    displayProducts(res.products);
+                },
+                error(err) {
+                    alert("Could not fetch products!");
+                },
+            });
+        }
+
+        function displayProducts(products) {
+            const productsEl = document.getElementById("products");
+            productsEl.innerHTML = products.map((product) => `
+                <div class="col-md-4 mb-4">
+                    <div class="card">
+                        <img src="${product.images[0]}" class="card-img-top" alt="${product.title}">
+                        <div class="card-body">
+                            <h5 class="card-title">${product.title}</h5>
+                            <p class="card-text">Price: ₹ ${product.price * 82}</p>
+                            <p class="card-text">Rating: ${product.rating}</p>
+                            <input type="text" id="couponCode-${product.id}" placeholder="Enter coupon code" />
+                            <button onclick="initiateCheckout(${JSON.stringify(product).replace(/"/g, '&quot;')}, 'couponCode-${product.id}')" class="btn btn-primary">Buy</button>
+                        </div>
+                    </div>
+                </div>
+            `).join("");
+        }
+
+        loadProducts();
+    </script>
+</body>
+</html>
+
+index.js:
+const express = require("express");
+const cors = require("cors");
+const path = require("path");
+require("dotenv").config();
+
+const Encrypt = require("./public/js/SHA512");
+const app = express();
+
+app.use(cors());
+app.use(express.json());
+app.use(express.static("public"));
+
+const stripe = require("stripe")(process.env.STRIPE_PRIVATE_KEY);
+
+// Mock coupons data (for example purposes)
+const coupons = {
+  'SUMMER2024': 10,  // 10% discount
+  'WINTER2024': 15,  // 15% discount
+  // Add more coupons as needed
+};
+
+// API endpoint to validate coupon code
+app.post("/validate-coupon", (req, res) => {
+  const { couponCode } = req.body;
+
+  if (!couponCode) {
+    return res.status(400).json({ error: "No coupon code provided" });
+  }
+
+  // Check if the coupon code is valid
+  const discount = coupons[couponCode];
+
+  if (discount !== undefined) {
+    // If coupon is valid, return discount
+    return res.json({ valid: true, discount });
+  } else {
+    // If coupon is invalid, return not valid
+    return res.json({ valid: false, discount: 0 });
+  }
+});
+
+app.post("/create-checkout-session", async (req, res) => {
+  try {
+    const { product, price, attackProtection } = req.body;
+
+    if (!product) {
+      return res.status(400).json({ error: "No product provided" });
+    }
+
+    if (attackProtection) {
+      const expectedHash = Encrypt.encryptor(product.price.toString());
+      if (product.hash !== expectedHash) {
+        return res.status(400).json({ error: "Invalid product data" });
+      }
+    }
+
+    // Log the product object to verify the price is being received correctly
+    console.log('Received product:', product);
+    console.log('Received discounted price:', price); // Log the discounted price
+
+    const session = await stripe.checkout.sessions.create({
+      payment_method_types: ["card"],
+      mode: "payment",
+      line_items: [{
+        price_data: {
+          currency: "inr",
+          product_data: {
+            name: product.title,
+            description: `Rating: ${product.rating}`,
+            images: [product.images[0]],
+          },
+          unit_amount: price, // Use the discounted price received
+        },
+        quantity: 1,
+      }],
+      success_url: `${process.env.SERVER_URL}/success.html`,
+      cancel_url: `${process.env.SERVER_URL}/cancel.html`,
+    });
+
+    return res.json({ url: session.url });
+  } catch (e) {
+    console.error("Error creating checkout session:", e);
+    return res.status(500).json({ error: e.message });
+  }
+});
+
+app.get('*', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`Server is running on port ${PORT}`);
+});
+
+checkout.js:
+async function initiateCheckout(product) {
+    const attackProtection = document.getElementById("attackProtection").checked;
+     if (attackProtection) {
+        product.hash = SHA512(product.price.toString());
+    }
+
+    // Access the coupon code input field
+    const couponField = document.querySelector("input[id='couponCode']"); // Get the coupon code input field
+    const couponCode = couponField ? couponField.value : ""; // Get the value or an empty string if not found
+
+    let discount = 0;
+    if (couponCode) {
+        discount = await validateCoupon(couponCode);  // Validate the coupon and get the discount
+    }
+
+    // Calculate the price in paise, assuming product.price is in INR
+    const originalPriceInPaise = Math.round(product.price * 100); // Convert to paise (1 INR = 100 paise)
+    const discountedPriceInPaise = Math.round(originalPriceInPaise * (1 - discount / 100)); // Apply discount
+
+    // Log the values to debug
+    console.log('Original Price in Paise:', originalPriceInPaise); // Log original price in paise
+    console.log('Discount:', discount);
+    console.log('Discounted Price in Paise:', discountedPriceInPaise); // Log discounted price in paise
+
+    setTimeout(() => {
+        fetch("/create-checkout-session", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+                product: {
+                    title: product.title,
+                    rating: product.rating,
+                    images: product.images,
+                    hash: product.hash, // Include hash if attack protection is enabled
+                },
+                price: discountedPriceInPaise, // Send the discounted price separately
+                attackProtection
+            })
+        })
+        .then((res) => {
+            if (res.ok) return res.json();
+            return res.json().then((json) => Promise.reject(json));
+        })
+        .then(({ url }) => {
+            window.location = url;
+        })
+        .catch((e) => {
+            console.error(e.error);
+            alert("An error occurred during checkout. Please try again.");
+        });
+    }, 2000); // 2 second delay
+}
+
+// Function to validate the coupon code by making an API call
+function validateCoupon(couponCode) {
+    return fetch("/validate-coupon", {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ couponCode }),  // Send the coupon code for validation
+    })
+    .then(res => res.json())
+    .then(data => {
+        if (data.valid) {
+            return data.discount;  // Return the discount percentage if the coupon is valid
+        } else {
+            alert("Invalid coupon code");  // Notify the user if the coupon is invalid
+            return 0;  // Return 0% discount if invalid
+        }
+    })
+    .catch(err => {
+        console.error("Error validating coupon", err);
+        alert("An error occurred while validating the coupon. Please try again.");
+        return 0;  // Return 0% discount in case of an error
+    });
+}
+
+function toggleAttackProtection() {
+    attackProtection = document.getElementById("attackProtection").checked;
+}
+
